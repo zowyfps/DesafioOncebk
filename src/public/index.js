@@ -1,77 +1,98 @@
 const socketClient = io();
 
-//Products
+//captura el formulario y lo agrega al usuario
+let user;
+Swal.fire({
+    title: 'Formulario perfil',
+    html: `<p>Ingrese los siguientes datos para usar el chat</p>
+    <input type="text" id="email" class="swal2-input" placeholder="Correo">
+    <input type="text" id="name" class="swal2-input" placeholder="Nombre">
+    <input type="text" id="lastname" class="swal2-input" placeholder="Apellido">`,
+    confirmButtonText: 'Iniciar',
+    focusConfirm: false,
+    preConfirm: () => {
+        const email = Swal.getPopup().querySelector('#email').value;
+        const name = Swal.getPopup().querySelector('#name').value;
+        const lastname = Swal.getPopup().querySelector("#lastname").value;
+        if (!email || !name || !lastname) {
+            Swal.showValidationMessage(`Pro favor complete el formulario`);
+        }
+        return { email, name, lastname}
+    },
+    allowOutsideClick: false
+}).then((result) => {
+    Swal.fire(`
+      Email: ${result.value.email}
+      Nombre: ${result.value.name}
+      Apellido: ${result.value.lastname}
+    `.trim());
+    // console.log(result.value);
+    user = result.value;
+});
 
+//**************//
+//envio del formulario
 const productForm = document.getElementById("productForm");
-
-productForm.addEventListener("submit", (event)=>{
-    event.preventDefault();
-    const product = {
-        title: document.getElementById("title").value,
+productForm.addEventListener("submit",(evt)=>{
+    evt.preventDefault();
+    const product= {
+        title:document.getElementById("title").value,
         price: document.getElementById("price").value,
         thumbnail: document.getElementById("thumbnail").value
     }
-    //Enviar producto por socket
-    socketClient.emit("newProduct", product)
+    socketClient.emit("newProduct",product)
+    productForm.reset();
 })
 
-const productsContainer = document.getElementById("productsContainer");
 
-socketClient.on("products", async(data)=>{
-    console.log(data)
-    const templateTable = await fetch("./templates/table.handlebars");
-    //Se convierte a formato del template
-    const templateFormat = await templateTable.text();
-    const template = Handlebars.compile(templateFormat);
+//**************//
+//productos en tiempo real
+const createTable = async(data)=>{
+    const response = await fetch("./template/table.handlebars");
+    const result = await response.text();
+    const template = Handlebars.compile(result);
+    const html = template({products:data});
+    return html;
+}
 
-    //Generar HTML con template y datos
-    const html = template({products: data})
-    productsContainer.innerHTML = html;
-    console.log(html)
+socketClient.on("products",async(data)=>{
+    const htmlTable = await createTable(data);
+    const productsContainer = document.getElementById("productsContainer");
+    productsContainer.innerHTML = htmlTable;
 })
 
-///////////////////////////////////////////////////////
+//esquemas
+const authorSchema = new normalizr.schema.Entity("authors",{}, {idAttribute:"email"});
+const messageSchema = new normalizr.schema.Entity("messages", {author: authorSchema});
+const chatSchema = new normalizr.schema.Entity("chat", {
+    messages:[messageSchema]
+}, {idAttribute:"id"});
 
-//Chat
 
-const chatContainer = document.getElementById("chatContainer");
+//**************//
+//chat
+socketClient.on("messages",async (dataMsg)=>{
+    console.log("dataMsg", dataMsg);
+    //de-normalizar
+    const normalData = normalizr.denormalize(dataMsg.result,chatSchema,dataMsg.entities);
+    // console.log("normalData",normalData)
+    let messageElements = "";
+    normalData.messages.forEach(msg=>{
+        messageElements += `<div><strong>${msg.author.name} - ${msg.timestamp}:</strong> ${msg.text}</div>`;
+    })
+    const chatContainer = document.getElementById("chatContainer");
+    chatContainer.innerHTML = normalData.messages.length>0 ? messageElements : '';
+});
 
-socketClient.on("messagesChat", (data) => {
-    console.log(data)
-    let messages="";
-    data.forEach(element => {
-        messages += `<p><span class="author">${element.author}</span>  <span class="date">[${element.date}]</span>
-        : <span class="text">${element.text}</span></p>`
+//envio del mensaje del chat
+const chatInput = document.getElementById("chatMsg");
+const chatButton = document.getElementById("sendMsg");
+
+chatButton.addEventListener("click",()=>{
+    socketClient.emit("newMessage",{
+        author:user,
+        text:chatInput.value,
+        timestamp: new Date().toLocaleString(),
     });
-    chatContainer.innerHTML = messages
-})
-
-//Capturar nombre de usuario
-let user = "";
-Swal.fire({
-    title:"Bienvenido/a",
-    text:"Ingresa tu direccion de mail para continuar",
-    input:"email",
-    allowOutsideClick: false
-}).then(response=>{
-    console.log(response)
-    user = response.value;
-    document.getElementById("username").innerHTML = `<span class="author">Welcome ${user}</span>`;
-})
-
-//Enviar un mensaje a server
-
-const chatForm = document.getElementById("chatForm");
-
-const messageChat = document.getElementById("messageChat");
-
-chatForm.addEventListener("submit", (event)=>{
-    event.preventDefault();
-    const message = {
-        author: user,
-        date: new Date(Date.now()).toLocaleString(),
-        text: messageChat.value
-    }
-    socketClient.emit("newMsg", message)
-    messageChat.value="";
+    chatInput.value = "";
 })
